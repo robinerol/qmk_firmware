@@ -14,12 +14,15 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 #include QMK_KEYBOARD_H
+#include "raw_hid.h"
+#include <string.h>
+#include <transactions.h>
 
 enum sofle_layers {
-    _QWERTY,
-    _LOWER,
-    _RAISE,
-    _ADJUST,
+    _QWERTY = 0,
+    _LOWER = 1,
+    _RAISE = 2,
+    _ADJUST = 3,
 };
 
 enum custom_keycodes {
@@ -262,86 +265,83 @@ const uint16_t PROGMEM encoder_map[][NUM_ENCODERS][2] = {
 
 #ifdef OLED_ENABLE
 
-static void render_logo(void) {
-    static const char PROGMEM qmk_logo[] = {
-        0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8A, 0x8B, 0x8C, 0x8D, 0x8E, 0x8F, 0x90, 0x91, 0x92, 0x93, 0x94,
-        0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF, 0xB0, 0xB1, 0xB2, 0xB3, 0xB4,
-        0xC0, 0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7, 0xC8, 0xC9, 0xCA, 0xCB, 0xCC, 0xCD, 0xCE, 0xCF, 0xD0, 0xD1, 0xD2, 0xD3, 0xD4, 0x00
-    };
+char oled_buffer_custom[(OLED_BUFFER_CUSTOM_LENGTH + 1)] = {0};
+int oled_buffer_page_size = OLED_BUFFER_CUSTOM_LENGTH / 5;
+int oled_buffer_cursor = 0;
 
-    oled_write_P(qmk_logo, false);
+void write_data_to_buffer(uint8_t *data) {
+    memcpy((char*) &oled_buffer_custom[oled_buffer_cursor], data, oled_buffer_page_size);
+
+    oled_buffer_cursor += oled_buffer_page_size;
+
+    if (oled_buffer_cursor >= OLED_BUFFER_CUSTOM_LENGTH) {
+        oled_buffer_cursor = 0;
+    }
 }
 
-void write_int_ln(const char* prefix, uint8_t value) {
-    oled_write_P(prefix, false);
-    oled_write(get_u8_str(value, ' '), false);
+void keyboard_sync_a_handler(uint8_t in_buflen, const void* in_data, uint8_t out_buflen, void* out_data) {
+    memcpy((char*) oled_buffer_custom, in_data, in_buflen);
 }
 
-static void print_status_narrow(void) {
-    oled_write_ln_P(PSTR("SofleChoc Robin_____"), false);
+void keyboard_sync_b_handler(uint8_t in_buflen, const void* in_data, uint8_t out_buflen, void* out_data) {
+    oled_scroll_off();
+}
 
-    if (get_highest_layer(layer_state) == _ADJUST) {
-        uint8_t mode  = rgb_matrix_get_mode();
-        HSV     hsv   = rgb_matrix_get_hsv();
-        uint8_t speed = rgb_matrix_get_speed();
+void notify_secondary(void) {
+    transaction_rpc_exec(KEYBOARD_SYNC_B, 0, &oled_buffer_custom, 0, &oled_buffer_custom);
+}
 
-        if (keymap_config.swap_lctl_lgui) {
-            oled_write_ln_P(PSTR("MAC\n"), false);
-        } else {
-            oled_write_ln_P(PSTR("WIN\n"), false);
-        }
+void send_data_to_host(void) {
+    uint8_t send_data[32] = {0};
+    send_data[0] = get_highest_layer(layer_state);
+    raw_hid_send(send_data, sizeof(send_data));
+}
 
-        oled_write_ln("RGB", false);
-        write_int_ln(PSTR("Mo"), mode);
-        write_int_ln(PSTR("H "), hsv.h);
-        write_int_ln(PSTR("S "), hsv.s);
-        write_int_ln(PSTR("V "), hsv.v);
-        write_int_ln(PSTR("Sp"), speed);
-        oled_write_P(PSTR("\n\n"), false);
-    } else {
-        oled_write_P(PSTR("\n\n\n\n\n\n\n\n"), false);
-        led_t led_usb_state = host_keyboard_led_state();
-        if (led_usb_state.caps_lock) {
-            oled_write_ln_P(PSTR(" CAP "), true);
-        } else {
-            oled_write_ln_P(PSTR("     "), false);
-        }
-    }
+void raw_hid_receive(uint8_t *data, uint8_t length) {
+    write_data_to_buffer(data);
+    oled_scroll_off();
+    notify_secondary();
+}
 
-    // Print current layer
-    switch (get_highest_layer(layer_state)) {
-        case _QWERTY:
-            oled_write_P(PSTR("Alpha"), false);
-            break;
-        case _LOWER:
-            oled_write_P(PSTR("Nav  "), false);
-            break;
-        case _RAISE:
-            oled_write_P(PSTR("Sym  "), false);
-            break;
-        case _ADJUST:
-            oled_write_P(PSTR("Adj  "), false);
-            break;
-        default:
-            oled_write_P(PSTR("???  "), false);
-    }
+void render_oled_buffer_custom(void) {
+    char temp_oled_buffer[(OLED_BUFFER_CUSTOM_LENGTH / 2 + 1)] = {0};
+    memcpy(temp_oled_buffer, oled_buffer_custom, OLED_BUFFER_CUSTOM_LENGTH / 2);
+    oled_write(temp_oled_buffer, false);
 }
 
 oled_rotation_t oled_init_user(oled_rotation_t rotation) {
-    if (is_keyboard_master()) {
-        return OLED_ROTATION_270;
-    }
-    return rotation;
+    return OLED_ROTATION_270;
 }
 
 bool oled_task_user(void) {
-    if (is_keyboard_master()) {
-        print_status_narrow();
-    } else {
-        render_logo();
-    }
-
+    render_oled_buffer_custom();
+    oled_scroll_left();
     return false;
+}
+
+void keyboard_post_init_user(void) {
+    oled_scroll_set_speed(4);
+    transaction_register_rpc(KEYBOARD_SYNC_A, keyboard_sync_a_handler);
+    transaction_register_rpc(KEYBOARD_SYNC_B, keyboard_sync_b_handler);
+}
+
+bool copy_oled_buffer_content_to_secondary(void) {
+    char temp_oled_buffer[(OLED_BUFFER_CUSTOM_LENGTH / 2 + 1)] = {0};
+    memcpy(temp_oled_buffer, &oled_buffer_custom[OLED_BUFFER_CUSTOM_LENGTH / 2], OLED_BUFFER_CUSTOM_LENGTH / 2);
+    return transaction_rpc_exec(KEYBOARD_SYNC_A, OLED_BUFFER_CUSTOM_LENGTH / 2, &temp_oled_buffer, 0, &oled_buffer_custom);
+}
+
+void housekeeping_task_user(void) {
+    if (is_keyboard_left()) {
+        send_data_to_host();
+
+        static uint32_t last_sync = 0;
+        if (timer_elapsed32(last_sync) > 500) {
+            if(copy_oled_buffer_content_to_secondary()) {
+                last_sync = timer_read32();
+            }
+        }
+    }
 }
 
 #endif

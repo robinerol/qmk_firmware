@@ -28,6 +28,17 @@
 // I've found this helps with some ProMicros where the slave does not boot
 #define SPLIT_USB_DETECT
 
+// define raw hid usage page and usage
+// https://github.com/qmk/qmk_firmware/blob/master/docs/feature_rawhid.md
+#define RAW_USAGE_PAGE 0xFF60
+#define RAW_USAGE_ID 0x61
+
+// define
+#define OLED_BRIGHTNESS 128
+#define OLED_BUFFER_CUSTOM_LENGTH 160
+#define SPLIT_TRANSACTION_IDS_KB KEYBOARD_SYNC_A, KEYBOARD_SYNC_B
+#define RPC_M2S_BUFFER_SIZE 80
+
 #ifdef RGB_MATRIX_ENABLE
 
 #define RGB_DISABLE_WHEN_USB_SUSPENDED     // turn off effects when suspended
